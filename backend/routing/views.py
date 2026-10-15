@@ -6,7 +6,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
-from .weather import get_weather
+from .weather import get_weather_batch
 from geopy.distance import geodesic
 import os
 
@@ -319,7 +319,6 @@ def health_check(request):
         {"status": "success", "message": "Weather Truck Routing API is running!"}
     )
 
-
 @api_view(["POST"])
 def plan_route(request):
     origin = request.data.get("origin")
@@ -347,9 +346,13 @@ def plan_route(request):
     try:
         load_weight = float(load_weight)
         if load_weight < 0:
-            return Response({"error": "Load weight cannot be negative."}, status=400)
+            return Response(
+                {"error": "Load weight cannot be negative."}, status=400
+            )
     except (TypeError, ValueError):
-        return Response({"error": "Load weight must be a valid number."}, status=400)
+        return Response(
+            {"error": "Load weight must be a valid number."}, status=400
+        )
 
     try:
         origin_coords = get_coordinates(origin)
@@ -364,7 +367,10 @@ def plan_route(request):
     if origin_coords is None or destination_coords is None:
         return Response(
             {
-                "error": "Could not find the origin or destination. Add the city and country."
+                "error": (
+                    "Could not find the origin or destination. "
+                    "Add the city and country."
+                )
             },
             status=400,
         )
@@ -377,6 +383,7 @@ def plan_route(request):
             print("Routing API response:", exc.response.text[:1000])
         else:
             print("Routing API connection error:", str(exc))
+
         return Response(
             {"error": "The routing service is unavailable. Please try again."},
             status=502,
@@ -384,10 +391,13 @@ def plan_route(request):
 
     if not routes:
         return Response(
-            {"error": "No driving routes were found for these locations."}, status=404
+            {"error": "No driving routes were found for these locations."},
+            status=404,
         )
 
-    enriched_routes = []
+    # First prepare checkpoints for every route.
+    route_data = []
+    all_checkpoints = []
 
     for index, route in enumerate(routes):
         distance_km = route["distance"] / 1000
@@ -397,35 +407,76 @@ def plan_route(request):
             route["geometry"],
             interval_miles=interval_miles,
         )
-        enriched_checkpoints = []
 
         for checkpoint in checkpoints:
-            arrival_time = calculate_arrival_time(
+            checkpoint["arrival_time"] = calculate_arrival_time(
                 departure,
                 checkpoint["distance_km"],
                 distance_km,
                 duration_minutes,
             )
 
-            try:
-                weather = get_weather(
-                    checkpoint["latitude"],
-                    checkpoint["longitude"],
-                    arrival_time,
-                )
-            except requests.RequestException:
-                weather = None
+        start_index = len(all_checkpoints)
+        all_checkpoints.extend(checkpoints)
+        end_index = len(all_checkpoints)
 
+        route_data.append(
+            {
+                "route_number": index + 1,
+                "route": route,
+                "distance_km": distance_km,
+                "duration_minutes": duration_minutes,
+                "checkpoint_start": start_index,
+                "checkpoint_end": end_index,
+            }
+        )
+
+    # Fetch weather once for all candidate routes.
+    try:
+        weather_results = get_weather_batch(all_checkpoints)
+    except requests.RequestException as exc:
+        print("BATCH WEATHER ERROR:", repr(exc))
+        weather_results = [None] * len(all_checkpoints)
+
+    # Ensure every checkpoint has a corresponding result.
+    if len(weather_results) < len(all_checkpoints):
+        weather_results.extend(
+            [None] * (len(all_checkpoints) - len(weather_results))
+        )
+    elif len(weather_results) > len(all_checkpoints):
+        weather_results = weather_results[:len(all_checkpoints)]
+
+    enriched_routes = []
+
+    for item in route_data:
+        route = item["route"]
+        distance_km = item["distance_km"]
+        duration_minutes = item["duration_minutes"]
+
+        start = item["checkpoint_start"]
+        end = item["checkpoint_end"]
+
+        enriched_checkpoints = []
+
+        for checkpoint, weather in zip(
+            all_checkpoints[start:end],
+            weather_results[start:end],
+        ):
             risk = calculate_weather_risk(weather, load_weight)
+
             if risk["risk_level"] == "unknown":
-                print("UNKNOWN CHECKPOINT:", checkpoint["distance_miles"], "miles | WEATHER:", weather, "| RISK:", risk)
-            if risk["risk_level"] == "unknown":
-                print("UNKNOWN CHECKPOINT:", checkpoint["distance_miles"], "miles | WEATHER:", weather)
+                print(
+                    "UNKNOWN CHECKPOINT:",
+                    checkpoint["distance_miles"],
+                    "miles | WEATHER:",
+                    weather,
+                    "| RISK:",
+                    risk,
+                )
 
             enriched_checkpoints.append(
                 {
                     **checkpoint,
-                    "arrival_time": arrival_time,
                     "weather": weather,
                     **risk,
                 }
@@ -433,7 +484,7 @@ def plan_route(request):
 
         enriched_routes.append(
             {
-                "route_number": index + 1,
+                "route_number": item["route_number"],
                 "distance_km": round(distance_km, 2),
                 "duration_minutes": round(duration_minutes, 1),
                 "geometry": route["geometry"],
@@ -448,11 +499,12 @@ def plan_route(request):
             }
         )
 
-    # Only recommend a route when its weather data is sufficiently complete.
+    # Recommend only routes with complete weather data and no No Travel points.
     for route in enriched_routes:
         checkpoints = route["checkpoints"]
         route["weather_data_complete"] = bool(checkpoints) and all(
-            checkpoint.get("risk_score") is not None for checkpoint in checkpoints
+            checkpoint.get("risk_score") is not None
+            for checkpoint in checkpoints
         )
 
     ranked_routes = sorted(
@@ -469,22 +521,24 @@ def plan_route(request):
         ),
     )
 
-    recommended_route_number = None
-
     eligible_routes = [
         route
         for route in ranked_routes
         if route["weather_data_complete"]
         and not any(
-            checkpoint.get("no_travel", False) for checkpoint in route["checkpoints"]
+            checkpoint.get("no_travel", False)
+            for checkpoint in route["checkpoints"]
         )
     ]
 
-    if eligible_routes:
-        recommended_route_number = eligible_routes[0]["route_number"]
+    recommended_route_number = (
+        eligible_routes[0]["route_number"] if eligible_routes else None
+    )
 
     for route in enriched_routes:
-        route["recommended"] = route["route_number"] == recommended_route_number
+        route["recommended"] = (
+            route["route_number"] == recommended_route_number
+        )
 
     return Response(
         {
