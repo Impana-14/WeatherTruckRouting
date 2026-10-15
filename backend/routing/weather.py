@@ -1,8 +1,13 @@
 import requests
 from datetime import datetime
+from functools import lru_cache
+
+@lru_cache(maxsize=512)
+def _get_weather_cached(latitude, longitude, arrival_time):
+    return _fetch_weather(latitude, longitude, arrival_time)
 
 
-def get_weather(latitude, longitude, arrival_time):
+def _fetch_weather(latitude, longitude, arrival_time):
     url = "https://api.open-meteo.com/v1/forecast"
 
     params = {
@@ -13,7 +18,6 @@ def get_weather(latitude, longitude, arrival_time):
         "timezone": "auto",
     }
 
-    
     try:
         response = requests.get(url, params=params, timeout=20)
         print("OPEN-METEO STATUS:", response.status_code)
@@ -66,3 +70,13 @@ def get_weather(latitude, longitude, arrival_time):
             value("snowfall") / 2.54 if value("snowfall") is not None else None
         ),
     }
+
+def get_weather(latitude, longitude, arrival_time):
+    target_time = datetime.fromisoformat(arrival_time)
+    forecast_hour = target_time.replace(minute=0, second=0, microsecond=0)
+
+    return _get_weather_cached(
+        round(latitude, 2),
+        round(longitude, 2),
+        forecast_hour.isoformat(),
+    )
