@@ -30,8 +30,8 @@ SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
 if not SECRET_KEY:
     raise ValueError("DJANGO_SECRET_KEY is missing from the environment")
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# Enable debug mode only for local development
+DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
 
 ALLOWED_HOSTS = [".onrender.com", "localhost", "127.0.0.1"]
 
