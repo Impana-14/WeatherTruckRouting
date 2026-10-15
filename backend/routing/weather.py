@@ -15,12 +15,15 @@ def get_weather(latitude, longitude, arrival_time):
 
     response = requests.get(url, params=params, timeout=20)
     response.raise_for_status()
+    print("OPEN-METEO STATUS:", response.status_code)
+    print("OPEN-METEO URL:", response.url)
     data = response.json()
 
     hourly = data.get("hourly", {})
     times = hourly.get("time", [])
 
     if not times:
+        print("OPEN-METEO RESPONSE:", data)
         return None
 
     target_time = datetime.fromisoformat(arrival_time)
