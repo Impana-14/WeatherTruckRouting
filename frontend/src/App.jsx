@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import 'leaflet/dist/leaflet.css'
+import './App.css'
 import RouteMap from './RouteMap'
 
 function App() {
@@ -114,20 +115,31 @@ function App() {
           placeholder="e.g. 12000"
           required
         />
-        <label>Weather checkpoint interval (miles)</label>
+
+        <label htmlFor="intervalMiles">
+          Weather checkpoint interval (miles)
+        </label>
+
         <select
+          id="intervalMiles"
           name="intervalMiles"
           value={form.intervalMiles}
           onChange={handleChange}
+          className="form-select"
         >
           <option value={10}>10 miles</option>
           <option value={25}>25 miles</option>
           <option value={50}>50 miles</option>
         </select>
 
-        <br /><br />
+        <button
+          type="submit"
+          disabled={loading}
+          style={{ display: 'block', marginTop: '8px' }}
+        >
+          {loading ? 'Planning Route...' : 'Plan Route'}
+        </button>
 
-        <button type="submit">Plan Route</button>
       </form>
 
       {loading && <p>Finding driving routes...</p>}

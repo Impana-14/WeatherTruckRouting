@@ -84,8 +84,75 @@ class WeatherRiskTests(SimpleTestCase):
         self.assertEqual(result["risk_level"], "no_travel")
         self.assertTrue(result["no_travel"])
 
+    
+    def test_rain_at_exactly_one_inch_is_severe(self):
+        result = calculate_weather_risk(self.get_weather(rain=1.00), 10000)
+        self.assertEqual(result["risk_level"], "severe")
+        self.assertFalse(result["no_travel"])
+
+    def test_snow_at_exactly_three_inches_is_severe(self):
+        result = calculate_weather_risk(self.get_weather(snow=3.00), 10000)
+        self.assertEqual(result["risk_level"], "severe")
+        self.assertFalse(result["no_travel"])
+
+    def test_rain_above_one_inch_means_no_travel(self):
+        result = calculate_weather_risk(self.get_weather(rain=1.01), 10000)
+        self.assertEqual(result["risk_level"], "no_travel")
+        self.assertTrue(result["no_travel"])
+
+    def test_snow_above_three_inches_means_no_travel(self):
+        result = calculate_weather_risk(self.get_weather(snow=3.01), 10000)
+        self.assertEqual(result["risk_level"], "no_travel")
+        self.assertTrue(result["no_travel"])
+
     def test_missing_weather_is_unknown(self):
         result = calculate_weather_risk(None, 10000)
         self.assertEqual(result["risk_level"], "unknown")
         self.assertIsNone(result["risk_score"])
         self.assertFalse(result["no_travel"])
+
+    def test_low_combined_weather_scenario(self):
+        weather = self.get_weather(
+            wind=10,
+            rain=0.05,
+            snow=0.2,
+        )
+        result = calculate_weather_risk(weather, 10000)
+        self.assertEqual(result["risk_level"], "low")
+
+    def test_moderate_combined_weather_scenario(self):
+        weather = self.get_weather(
+            wind=28,
+            rain=0.15,
+            snow=0.7,
+        )
+        result = calculate_weather_risk(weather, 10000)
+        self.assertEqual(result["risk_level"], "moderate")
+
+    def test_high_combined_weather_scenario(self):
+        weather = self.get_weather(
+            wind=38,
+            rain=0.30,
+            snow=1.5,
+        )
+        result = calculate_weather_risk(weather, 10000)
+        self.assertEqual(result["risk_level"], "high")
+
+    def test_severe_combined_weather_scenario(self):
+        weather = self.get_weather(
+            wind=48,
+            rain=0.60,
+            snow=2.5,
+        )
+        result = calculate_weather_risk(weather, 10000)
+        self.assertEqual(result["risk_level"], "severe")
+
+    def test_no_travel_combined_weather_scenario(self):
+        weather = self.get_weather(
+            wind=56,
+            rain=0.05,
+            snow=0,
+        )
+        result = calculate_weather_risk(weather, 10000)
+        self.assertEqual(result["risk_level"], "no_travel")
+        self.assertTrue(result["no_travel"])

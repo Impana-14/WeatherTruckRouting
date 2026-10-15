@@ -30,7 +30,10 @@ function WeatherHeatmap({ routes, forecastHour }) {
                     const hoursFromDeparture =
                         (checkpointTime - departureTime) / (1000 * 60 * 60)
 
-                    return Math.abs(hoursFromDeparture - forecastHour) < 0.5
+                    return (
+                        hoursFromDeparture >= forecastHour &&
+                        hoursFromDeparture < forecastHour + 1
+                    )
                 })
                 .map((checkpoint) => {
                     const intensity = {
@@ -91,6 +94,35 @@ function RouteMap({ routes, forecastHour }) {
     return (
         <div style={{ marginTop: '24px' }}>
             <h2>Route Map</h2>
+            <div style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '12px',
+                marginBottom: '12px',
+                fontSize: '14px'
+            }}>
+                {[
+                    { label: 'Low', color: '#16a34a' },
+                    { label: 'Moderate', color: '#eab308' },
+                    { label: 'High', color: '#f97316' },
+                    { label: 'Severe', color: '#dc2626' },
+                    { label: 'No Travel', color: '#7f1d1d' },
+                ].map((risk) => (
+                    <span
+                        key={risk.label}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}
+                    >
+                        <span style={{
+                            width: '12px',
+                            height: '12px',
+                            borderRadius: '50%',
+                            backgroundColor: risk.color,
+                            display: 'inline-block'
+                        }} />
+                        {risk.label}
+                    </span>
+                ))}
+            </div>
 
             <MapContainer
                 center={center}
@@ -146,6 +178,7 @@ function RouteMap({ routes, forecastHour }) {
                                     high: '#f97316',
                                     severe: '#dc2626',
                                     unknown: '#64748b',
+                                    no_travel: '#7f1d1d',
                                 }
 
                                 return (
@@ -154,10 +187,9 @@ function RouteMap({ routes, forecastHour }) {
                                         center={[checkpoint.latitude, checkpoint.longitude]}
                                         radius={isSelectedHour ? 11 : 7}
                                         pathOptions={{
-                                            color: isSelectedHour
-                                                ? '#2563eb'
-                                                : colors[checkpoint.risk_level] || colors.unknown,
-                                            weight: isSelectedHour ? 4 : 2,
+                                            color: colors[checkpoint.risk_level] || colors.unknown,
+                                            weight: isSelectedHour ? 5 : 2,
+                                            fillColor: colors[checkpoint.risk_level] || colors.unknown,
                                             fillOpacity: 0.9,
                                         }}
                                     >
