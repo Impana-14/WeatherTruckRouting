@@ -1,131 +1,106 @@
+import os
 import requests
 from datetime import datetime
 from functools import lru_cache
 
+WEATHERAPI_URL = "https://api.weatherapi.com/v1/forecast.json"
+
 
 def _parse_weather(data, arrival_time):
-    hourly = data.get("hourly", {})
-    times = hourly.get("time", [])
+    forecast_days = data.get("forecast", {}).get("forecastday", [])
 
-    if not times:
+    if not forecast_days:
         return None
 
     target_time = datetime.fromisoformat(arrival_time)
-    forecast_times = [datetime.fromisoformat(t) for t in times]
+    hours = [
+        hour
+        for day in forecast_days
+        for hour in day.get("hour", [])
+    ]
 
-    index = min(
-        range(len(forecast_times)),
-        key=lambda i: abs(
-            (forecast_times[i] - target_time).total_seconds()
-        ),
-    )
-
-    if abs(
-        (forecast_times[index] - target_time).total_seconds()
-    ) > 90 * 60:
+    if not hours:
         return None
 
-    def value(name):
-        values = hourly.get(name, [])
-        return values[index] if index < len(values) else None
+    def parse_time(hour):
+        return datetime.fromisoformat(hour["time"])
 
-    wind = value("wind_speed_10m")
-    rain = value("rain")
-    snow = value("snowfall")
+    # Match the forecast hour closest to the checkpoint's arrival.
+    target = min(hours, key=lambda hour: abs(
+        (parse_time(hour) - target_time).total_seconds()
+    ))
+
+    if abs((parse_time(target) - target_time).total_seconds()) > 90 * 60:
+        return None
+
+    rain_inches = target.get("precip_in")
+    snow_cm = target.get("snow_cm")
+    wind_mph = target.get("wind_mph")
 
     return {
-        "time": times[index],
-        "temperature_c": value("temperature_2m"),
-        "precipitation_mm": value("precipitation"),
-        "rain_mm": rain,
-        "snowfall_cm": snow,
-        "wind_speed_mph": (
-            wind * 0.621371 if wind is not None else None
+        "time": target.get("time"),
+        "temperature_c": target.get("temp_c"),
+        "precipitation_mm": (
+            target.get("precip_mm")
         ),
-        "rain_inches_per_hour": (
-            rain / 25.4 if rain is not None else None
+        "rain_mm": (
+            rain_inches * 25.4 if rain_inches is not None else None
         ),
+        "snowfall_cm": snow_cm,
+        "wind_speed_mph": wind_mph,
+        "rain_inches_per_hour": rain_inches,
         "snow_inches_per_hour": (
-            snow / 2.54 if snow is not None else None
+            snow_cm / 2.54 if snow_cm is not None else None
         ),
     }
 
 
-@lru_cache(maxsize=512)
-def _get_weather_cached(latitude, longitude, arrival_time):
-    url = "https://api.open-meteo.com/v1/forecast"
-    params = {
-        "latitude": latitude,
-        "longitude": longitude,
-        "hourly": (
-            "temperature_2m,precipitation,rain,"
-            "snowfall,wind_speed_10m"
-        ),
-        "forecast_days": 3,
-        "timezone": "auto",
-    }
+@lru_cache(maxsize=256)
+def _get_weather_cached(latitude, longitude, arrival_hour):
+    api_key = os.getenv("WEATHERAPI_API_KEY")
 
-    response = requests.get(url, params=params, timeout=20)
+    if not api_key:
+        raise RuntimeError("WEATHERAPI_API_KEY is not configured")
+
+    response = requests.get(
+        WEATHERAPI_URL,
+        params={
+            "key": api_key,
+            "q": f"{latitude},{longitude}",
+            "days": 3,
+            "aqi": "no",
+            "alerts": "no",
+        },
+        timeout=20,
+    )
     response.raise_for_status()
 
-    return _parse_weather(response.json(), arrival_time)
+    return _parse_weather(response.json(), arrival_hour)
 
 
 def get_weather(latitude, longitude, arrival_time):
     target = datetime.fromisoformat(arrival_time)
-    forecast_hour = target.replace(
-        minute=0, second=0, microsecond=0
-    )
-
     return _get_weather_cached(
         round(latitude, 2),
         round(longitude, 2),
-        forecast_hour.isoformat(),
+        target.isoformat(),
     )
 
 
 def get_weather_batch(checkpoints):
-    if not checkpoints:
-        return []
-
-    url = "https://api.open-meteo.com/v1/forecast"
-
-    params = {
-        "latitude": ",".join(
-            str(round(c["latitude"], 2)) for c in checkpoints
-        ),
-        "longitude": ",".join(
-            str(round(c["longitude"], 2)) for c in checkpoints
-        ),
-        "hourly": (
-            "temperature_2m,precipitation,rain,"
-            "snowfall,wind_speed_10m"
-        ),
-        "forecast_days": 3,
-        "timezone": "auto",
-    }
-
-    response = requests.get(url, params=params, timeout=30)
-    response.raise_for_status()
-
-    data = response.json()
-
-    # Open-Meteo returns a list for multiple locations.
-    if isinstance(data, dict):
-        data = [data]
-
     results = []
 
-    for index, checkpoint in enumerate(checkpoints):
-        if index >= len(data):
-            results.append(None)
-            continue
-
-        results.append(
-            _parse_weather(
-                data[index],
+    for checkpoint in checkpoints:
+        try:
+            weather = get_weather(
+                checkpoint["latitude"],
+                checkpoint["longitude"],
                 checkpoint["arrival_time"],
             )
-        )
+        except (requests.RequestException, ValueError) as exc:
+            print("WEATHERAPI ERROR:", repr(exc))
+            weather = None
+
+        results.append(weather)
 
     return results
