@@ -13,10 +13,16 @@ def get_weather(latitude, longitude, arrival_time):
         "timezone": "auto",
     }
 
-    response = requests.get(url, params=params, timeout=20)
-    response.raise_for_status()
-    print("OPEN-METEO STATUS:", response.status_code)
-    print("OPEN-METEO URL:", response.url)
+    
+    try:
+        response = requests.get(url, params=params, timeout=20)
+        print("OPEN-METEO STATUS:", response.status_code)
+        print("OPEN-METEO URL:", response.url)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        print("OPEN-METEO ERROR:", repr(exc))
+        raise
+
     data = response.json()
 
     hourly = data.get("hourly", {})
